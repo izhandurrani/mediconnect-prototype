@@ -1,73 +1,65 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import ErrorBanner from "../components/ErrorBanner";
 import PasswordInput from "../components/PasswordInput";
 import LoadingSpinner from "../components/LoadingSpinner";
 
-// ── Validation ──────────────────────────────────────────────────────────────
+// ── Validation helpers ──────────────────────────────────────────────────────
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_RE = /^[+]?[0-9]{10,13}$/;
 
-export default function LoginScreen() {
+function validate(name, email, phone, password) {
+  const errors = {};
+  if (!name || name.trim().length < 2) errors.name = "Name must be at least 2 characters.";
+  if (!email || !EMAIL_RE.test(email)) errors.email = "Please enter a valid email address.";
+  if (!phone || !PHONE_RE.test(phone.replace(/\s/g, ""))) errors.phone = "Enter a valid phone number (10–13 digits).";
+  if (!password || password.length < 6) errors.password = "Password must be at least 6 characters.";
+  return errors;
+}
+
+export default function SignUpScreen() {
   const navigate = useNavigate();
-  const { signIn, signInWithGoogle, authError } = useAuth();
+  const { signUp, signInWithGoogle, authError } = useAuth();
 
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [bannerError, setBannerError] = useState(null);
-  const [resetSent, setResetSent] = useState(false);
 
+  // Sync hook error to banner
   const displayError = bannerError || authError;
 
-  // Determine if user has completed onboarding (language set in Firestore)
-  async function routeAfterAuth(user) {
-    try {
-      const snap = await getDoc(doc(db, "users", user.uid));
-      if (snap.exists() && snap.data().language) {
-        navigate("/home");
-      } else {
-        navigate("/language");
-      }
-    } catch {
-      navigate("/language");
-    }
-  }
-
-  // ── Email / Password Sign In ────────────────────────────────────
   async function handleSubmit(e) {
     e.preventDefault();
     setBannerError(null);
-    setResetSent(false);
 
-    const errors = {};
-    if (!email || !EMAIL_RE.test(email)) errors.email = "Please enter a valid email.";
-    if (!password) errors.password = "Please enter your password.";
+    // Client-side validation
+    const errors = validate(name, email, phone, password);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
     setIsLoading(true);
     try {
-      const user = await signIn(email.trim(), password);
-      await routeAfterAuth(user);
+      await signUp(name.trim(), email.trim(), phone.replace(/\s/g, ""), password);
+      navigate("/language");
     } catch {
-      // authError is set by the hook
+      // authError is set by the hook; also surface it as banner
+      setBannerError(null); // hook already sets authError
     } finally {
       setIsLoading(false);
     }
   }
 
-  // ── Google OAuth ────────────────────────────────────────────────
   async function handleGoogle() {
     setBannerError(null);
     setIsLoading(true);
     try {
       const user = await signInWithGoogle();
-      if (user) await routeAfterAuth(user);
+      if (user) navigate("/language");
     } catch {
       // hook sets authError
     } finally {
@@ -75,26 +67,11 @@ export default function LoginScreen() {
     }
   }
 
-  // ── Forgot Password ────────────────────────────────────────────
-  async function handleForgotPassword() {
-    if (!email || !EMAIL_RE.test(email)) {
-      setFieldErrors({ email: "Enter your email above first." });
-      return;
-    }
-    try {
-      await sendPasswordResetEmail(auth, email.trim());
-      setResetSent(true);
-      setBannerError(null);
-    } catch {
-      setBannerError("Could not send reset email. Check the address and try again.");
-    }
-  }
-
   return (
-    <div className="flex-1 px-5 pt-12 pb-6 flex flex-col gap-0 bg-white min-h-[580px]">
+    <div className="flex-1 px-5 pt-10 pb-6 flex flex-col gap-0 bg-white min-h-[580px]">
 
       {/* Brand Logo */}
-      <div className="flex items-center gap-2.5 mb-7">
+      <div className="flex items-center gap-2.5 mb-6">
         <div className="w-[38px] h-[38px] bg-brand rounded-xl flex items-center justify-center shrink-0">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
             <rect x="9" y="3" width="2" height="14" rx="1" fill="white" />
@@ -105,21 +82,27 @@ export default function LoginScreen() {
       </div>
 
       {/* Heading */}
-      <div className="text-[20px] font-bold text-text mb-1">Welcome back</div>
-      <div className="text-[13px] text-text2 mb-[22px]">Sign in to access emergency services</div>
+      <div className="text-[22px] font-bold text-text mb-1">Create account</div>
+      <div className="text-[13px] text-text2 mb-5">Join MediConnect to access emergency services</div>
 
       {/* Error Banner */}
       <ErrorBanner message={displayError} onDismiss={() => setBannerError(null)} />
 
-      {/* Reset success toast */}
-      {resetSent && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-xl text-xs text-green-700 font-medium flex items-center gap-2">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
-          Reset link sent to your email
-        </div>
-      )}
-
       <form onSubmit={handleSubmit} noValidate>
+
+        {/* Full name */}
+        <div className="mb-[14px]">
+          <div className="text-[12px] font-semibold text-text2 mb-[5px]">Full name</div>
+          <input
+            className={`w-full p-[11px_12px] border rounded-xl text-[13px] text-text bg-gray outline-none focus:border-brand2 focus:bg-white ${fieldErrors.name ? 'border-red-400' : 'border-border'}`}
+            placeholder="Rahul Sharma"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={isLoading}
+          />
+          {fieldErrors.name && <div className="text-[11px] text-red-500 mt-1 font-medium">{fieldErrors.name}</div>}
+        </div>
 
         {/* Email */}
         <div className="mb-[14px]">
@@ -135,34 +118,38 @@ export default function LoginScreen() {
           {fieldErrors.email && <div className="text-[11px] text-red-500 mt-1 font-medium">{fieldErrors.email}</div>}
         </div>
 
+        {/* Phone */}
+        <div className="mb-[14px]">
+          <div className="text-[12px] font-semibold text-text2 mb-[5px]">Phone number</div>
+          <input
+            className={`w-full p-[11px_12px] border rounded-xl text-[13px] text-text bg-gray outline-none focus:border-brand2 focus:bg-white ${fieldErrors.phone ? 'border-red-400' : 'border-border'}`}
+            placeholder="+91 98765 43210"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            disabled={isLoading}
+          />
+          <div className="text-[10px] text-text3 mt-1">Stored in your profile — not used for login</div>
+          {fieldErrors.phone && <div className="text-[11px] text-red-500 mt-1 font-medium">{fieldErrors.phone}</div>}
+        </div>
+
         {/* Password */}
         <PasswordInput
           label="Password"
-          placeholder="Enter password"
+          placeholder="Min. 6 characters"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           disabled={isLoading}
           error={fieldErrors.password}
         />
 
-        {/* Forgot password */}
-        <div className="flex justify-end mb-2 -mt-2">
-          <button
-            type="button"
-            className="text-[11px] text-brand2 font-semibold bg-transparent border-none cursor-pointer p-0 hover:underline"
-            onClick={handleForgotPassword}
-          >
-            Forgot password?
-          </button>
-        </div>
-
         {/* Submit */}
         <button
           type="submit"
-          className="w-full p-[14px] bg-brand text-white border-none rounded-xl text-[14px] font-bold cursor-pointer mb-[10px] tracking-wide disabled:opacity-70 mt-[10px] flex items-center justify-center gap-2"
+          className="w-full p-[14px] bg-brand text-white border-none rounded-xl text-[14px] font-bold cursor-pointer mb-[10px] tracking-wide disabled:opacity-70 mt-[14px] flex items-center justify-center gap-2"
           disabled={isLoading}
         >
-          {isLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
+          {isLoading ? <LoadingSpinner size="sm" /> : "Create Account"}
         </button>
       </form>
 
@@ -187,14 +174,14 @@ export default function LoginScreen() {
         Continue with Google
       </button>
 
-      {/* Link to Sign Up */}
+      {/* Link to Sign In */}
       <div className="text-center text-[12px] text-text2 mt-4">
-        Don't have an account?{" "}
+        Already have an account?{" "}
         <span
           className="text-brand2 font-semibold cursor-pointer"
-          onClick={() => navigate("/signup")}
+          onClick={() => navigate("/")}
         >
-          Sign up
+          Sign in
         </span>
       </div>
     </div>

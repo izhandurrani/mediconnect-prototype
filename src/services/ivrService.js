@@ -1,11 +1,17 @@
 /**
  * ivrService.js
  * Handles parallel IVR triggers for emergency hospital alerts.
+ * 
+ * When triggering a call via Exotel, the `Url` parameter tells Exotel
+ * which endpoint to hit for the initial ExoML. We pass the alertId as
+ * a query param so the ExoML endpoint can fetch the right patient summary.
  */
 
 const EXOTEL_SID = import.meta.env.VITE_EXOTEL_SID;
 const EXOTEL_TOKEN = import.meta.env.VITE_EXOTEL_TOKEN;
-const EXOTEL_API_URL = import.meta.env.VITE_EXOTEL_API_URL || 'https://api.exotel.com/v1/Accounts';
+const EXOTEL_SUBDOMAIN = import.meta.env.VITE_EXOTEL_SUBDOMAIN || 'api.exotel.com';
+const EXOTEL_CALLER_ID = import.meta.env.VITE_EXOTEL_CALLER_ID;
+const APP_BASE_URL = import.meta.env.VITE_APP_BASE_URL || window.location.origin;
 
 /**
  * Triggers parallel IVR calls to a list of hospitals.
@@ -19,7 +25,7 @@ export async function triggerParallelIVR(hospitals, aiSummary, alertIds) {
 
   if (!hospitals || hospitals.length === 0) {
     console.warn('⚠️ No hospitals provided for IVR trigger.');
-    return;
+    return [];
   }
 
   const callPromises = hospitals.map(async (hospital) => {
@@ -34,22 +40,49 @@ export async function triggerParallelIVR(hospitals, aiSummary, alertIds) {
     console.log(`📞 Triggering IVR for: ${hospital.name} (${hospitalPhone}) | AlertID: ${alertId}`);
 
     try {
-      // In a real implementation:
-      // const response = await fetch(...)
-      // const data = await response.json();
-      // const exotelSid = data.Call.Sid;
-      
-      // Simulation: Link the CallSid (mocked) to the Firestore doc
-      const mockSid = `sid_${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Crucial: Update the Firestore doc with the SID so the callback can find it
-      // import { doc, updateDoc } from 'firebase/firestore';
-      // import { db } from '../lib/firebase';
-      // await updateDoc(doc(db, 'emergency_alerts', alertId), { exotel_sid: mockSid });
+      // ── Real Exotel API call ─────────────────────────────
+      // The `Url` parameter tells Exotel to fetch ExoML from our endpoint,
+      // passing the alertId so it can look up the patient's voice summary.
+      if (EXOTEL_SID && EXOTEL_TOKEN && EXOTEL_CALLER_ID) {
+        const exomlUrl = `${APP_BASE_URL}/api/exotel-exoml?alertId=${encodeURIComponent(alertId)}`;
+
+        const response = await fetch(
+          `https://${EXOTEL_SUBDOMAIN}/v1/Accounts/${EXOTEL_SID}/Calls/connect.json`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Basic ' + btoa(`${EXOTEL_SID}:${EXOTEL_TOKEN}`),
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              From: EXOTEL_CALLER_ID,
+              To: hospitalPhone,
+              CallerId: EXOTEL_CALLER_ID,
+              Url: exomlUrl,
+              // StatusCallback can be added for call-level events
+            }).toString(),
+          }
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`❌ Exotel API Error for ${hospital.name}:`, errorText);
+          return { hospitalId: hospital.id, status: 'failed', error: errorText };
+        }
+
+        const data = await response.json();
+        const sid = data?.Call?.Sid || data?.sid;
+        console.log(`✅ IVR triggered for: ${hospital.name} | Sid: ${sid}`);
+        return { hospitalId: hospital.id, status: 'triggered', sid };
+      }
+
+      // ── Simulation mode (no Exotel credentials) ──────────
+      console.log(`🧪 [SIMULATION] No Exotel credentials. Mocking IVR for: ${hospital.name}`);
+      const mockSid = `sim_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 
       return new Promise((resolve) => {
         setTimeout(() => {
-          console.log(`✅ IVR Request Successful for: ${hospital.name} | Sid: ${mockSid}`);
+          console.log(`✅ [SIM] IVR Request mocked for: ${hospital.name} | Sid: ${mockSid}`);
           resolve({ hospitalId: hospital.id, status: 'triggered', sid: mockSid });
         }, 500);
       });

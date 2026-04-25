@@ -2,9 +2,15 @@ import { useState, useEffect } from "react";
 import { collection, addDoc, doc, onSnapshot, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase";
 
-export function useEmergency() {
-  const [emergencyId, setEmergencyId] = useState(null);
+export function useEmergency(externalId = null) {
+  const [emergencyId, setEmergencyId] = useState(externalId);
   const [emergency, setEmergency]     = useState(null);
+
+  // Sync when parent provides/changes the ID (e.g. CallingScreen reads from context)
+  useEffect(() => {
+    if (externalId && externalId !== emergencyId) setEmergencyId(externalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalId]);
 
   // Create a new emergency document (triggers Cloud Function via onWrite)
   async function createEmergency({ userId, type, lat, lng, scheme, language }) {

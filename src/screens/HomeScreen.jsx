@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 import { translations } from '../constants/translations';
@@ -17,6 +17,23 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/* ── Time-aware greeting ── */
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/* ── Derive display name from auth or profile ── */
+function getDisplayName(profile) {
+  if (profile?.name && profile.name !== 'User') return profile.name;
+  const user = auth.currentUser;
+  if (user?.displayName) return user.displayName;
+  if (user?.phoneNumber) return user.phoneNumber;
+  return 'User';
+}
+
 export default function HomeScreen() {
   const navigate = useNavigate();
   const { activeScheme, selectedLanguage, location, setLocation, userProfile, activeSchemes, profileLoading } = useAppContext();
@@ -25,6 +42,9 @@ export default function HomeScreen() {
   const [hospitalsLoading, setHospitalsLoading] = useState(true);
   const [showHospitalPreview, setShowHospitalPreview] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  const displayName = getDisplayName(userProfile);
+  const greeting = getGreeting();
 
   useEffect(() => {
     const applyFallbackLocation = () => {
@@ -116,11 +136,11 @@ export default function HomeScreen() {
         {/* ── Greeting Header ── */}
         <div className="flex items-center justify-between pt-2 md:pt-4 mb-5">
           <div>
-            <div className="text-sm text-slate-400 font-medium tracking-wide">MediConnect Welcomes You,</div>
+            <div className="text-sm text-slate-400 font-medium tracking-wide">{greeting},</div>
             {profileLoading ? (
               <div className="h-9 w-48 bg-slate-200 animate-pulse rounded-lg mt-1"></div>
             ) : (
-              <div className="text-3xl font-black text-slate-800 tracking-tight leading-tight mt-1">{userProfile?.name || 'User'}</div>
+              <div className="text-3xl font-black text-slate-800 tracking-tight leading-tight mt-1">{displayName}</div>
             )}
             <div className="flex items-center gap-1.5 mt-2">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="#2563EB">
@@ -136,7 +156,7 @@ export default function HomeScreen() {
               onClick={() => setProfileOpen(true)}
               className="w-12 h-12 rounded-2xl bg-brand/10 flex items-center justify-center text-sm font-bold text-brand border-2 border-transparent hover:border-brand/30 transition-all active:scale-95 cursor-pointer shrink-0 mt-1"
             >
-              {(userProfile?.name || 'User').split(' ').map(n => n[0]).join('').slice(0, 2)}
+              {displayName.split(' ').map(n => n[0]).join('').slice(0, 2)}
             </button>
           )}
         </div>
