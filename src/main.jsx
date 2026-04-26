@@ -11,3 +11,17 @@ createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </StrictMode>,
 )
+
+// ── PWA Service Worker Registration ─────────────────────────────────
+import { registerSW } from 'virtual:pwa-register'
+
+const updateSW = registerSW({
+  onNeedRefresh() {
+    if (confirm('New version available! Update now?')) {
+      updateSW(true)
+    }
+  },
+  onOfflineReady() {
+    console.log('MediConnect is ready for offline use')
+  },
+})

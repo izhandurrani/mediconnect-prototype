@@ -95,12 +95,11 @@ export default function LoginScreen() {
 
       {/* Brand Logo */}
       <div className="flex items-center gap-2.5 mb-7">
-        <div className="w-[38px] h-[38px] bg-brand rounded-xl flex items-center justify-center shrink-0">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <rect x="9" y="3" width="2" height="14" rx="1" fill="white" />
-            <rect x="3" y="9" width="14" height="2" rx="1" fill="white" />
-          </svg>
-        </div>
+        <img
+          src="/icons/icon-192.png"
+          alt="MediConnect"
+          className="w-10 h-10 rounded-xl object-contain"
+        />
         <div className="text-[18px] font-extrabold text-text">MediConnect</div>
       </div>
 
