@@ -164,7 +164,7 @@ export default function HomeScreen() {
         {/* ── SOS Button ── */}
         <div 
           className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl p-6 mb-8 flex flex-col items-center gap-3 cursor-pointer transition-all active:scale-[0.97] shadow-xl shadow-red-500/20 hover:shadow-2xl hover:-translate-y-0.5"
-          onClick={() => navigate('/emergency')}
+          onClick={() => navigate('/voice')}
         >
           <div className="w-20 h-20 rounded-full border-[3px] border-white/30 flex items-center justify-center">
             <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">

@@ -6,6 +6,45 @@ import { useAppContext } from '../context/AppContext';
 import { useEmergency } from '../hooks/useEmergency';
 import ErrorBanner from '../components/ErrorBanner';
 
+/* ── Status → visual config ── */
+const STATUS_CONFIG = {
+  calling: {
+    label: 'Calling...',
+    dotClass: 'bg-amber animate-pulse',
+    textClass: 'text-amber',
+    borderClass: '',
+    icon: '📞',
+  },
+  confirmed: {
+    label: 'Confirmed ✓',
+    dotClass: 'bg-green',
+    textClass: 'text-green',
+    borderClass: 'border-green bg-green/5',
+    icon: '✅',
+  },
+  rejected: {
+    label: 'Rejected ✕',
+    dotClass: 'bg-red',
+    textClass: 'text-red',
+    borderClass: 'border-red/30 bg-red/5',
+    icon: '❌',
+  },
+  no_answer: {
+    label: 'No Answer',
+    dotClass: 'bg-slate-300',
+    textClass: 'text-slate-400',
+    borderClass: 'border-slate-200 bg-slate-50',
+    icon: '⏳',
+  },
+  waiting: {
+    label: 'Waiting...',
+    dotClass: 'bg-slate-200 animate-pulse',
+    textClass: 'text-slate-400',
+    borderClass: '',
+    icon: '⏳',
+  },
+};
+
 export default function CallingScreen() {
   const navigate = useNavigate();
   const { emergencyId, emergencyType } = useAppContext();
@@ -76,22 +115,46 @@ export default function CallingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emergency?.hospitalsContacted]);
 
-  // ── Derive display hospitals with live status ───────────────────
+  // ── Derive per-hospital status from ivrResponses map ────────────
   const contactedIds = emergency?.hospitalsContacted || [];
   const confirmedIds = emergency?.confirmed || [];
+  const ivrResponses = emergency?.ivrResponses || {};
 
   const displayHospitals = contactedIds.map((id) => {
     const info = hospitalMap[id] || { name: 'Loading...' };
-    let status = 'waiting';
-    if (confirmedIds.includes(id)) status = 'confirmed';
-    else if (contactedIds.includes(id)) status = 'calling';
+
+    // Priority: ivrResponses map (set by webhook) → confirmed array → calling
+    let status = 'calling';
+    if (ivrResponses[id]?.status) {
+      status = ivrResponses[id].status; // "confirmed" | "rejected"
+    } else if (confirmedIds.includes(id)) {
+      status = 'confirmed';
+    }
+
     return { id, name: info.name, status };
   });
 
-
+  // Counts
+  const confirmedCount = displayHospitals.filter((h) => h.status === 'confirmed').length;
+  const rejectedCount = displayHospitals.filter((h) => h.status === 'rejected').length;
+  const callingCount = displayHospitals.filter((h) => h.status === 'calling').length;
 
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
+      <style>{`
+        @keyframes card-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.15); }
+          50% { box-shadow: 0 0 0 6px rgba(245,158,11,0); }
+        }
+        @keyframes card-confirm {
+          0% { transform: scale(0.97); }
+          50% { transform: scale(1.02); }
+          100% { transform: scale(1); }
+        }
+        .card-calling { animation: card-pulse 2s ease-in-out infinite; }
+        .card-confirmed { animation: card-confirm 0.4s ease-out forwards; }
+      `}</style>
+
       {/* Red header */}
       <div className="bg-red p-[14px_16px] flex items-center gap-[10px] shrink-0">
         <div className="text-white ml-[6px]">
@@ -119,7 +182,7 @@ export default function CallingScreen() {
         <div className="text-[16px] font-bold text-text">Calling hospitals simultaneously</div>
         <div className="text-[12px] text-text2 text-center leading-[1.5]">
           {contactedIds.length > 0
-          ? `${contactedIds.length} hospitals being contacted. Waiting for responses (${secondsLeft}s)`
+          ? `${contactedIds.length} hospitals contacted · ${confirmedCount} confirmed · ${callingCount} calling (${secondsLeft}s)`
           : `Initiating IVR broadcast... (${secondsLeft}s)`
         }
         </div>
@@ -134,25 +197,35 @@ export default function CallingScreen() {
           </div>
         )}
 
-        {/* Hospital list — real data */}
-        <div className="w-full flex flex-col gap-[6px] mt-[4px]">
+        {/* Hospital list — real-time status cards */}
+        <div className="w-full flex flex-col gap-[8px] mt-[4px]">
           {displayHospitals.length > 0 ? (
-            displayHospitals.map((h) => (
-              <div key={h.id} className="flex items-center gap-[10px] p-[8px_12px] bg-gray rounded-xl">
-                <div className={`w-[8px] h-[8px] rounded-full shrink-0 ${
-                  h.status === 'confirmed' ? 'bg-green' :
-                  h.status === 'calling' ? 'bg-amber animate-pulse' : 'bg-border'
-                }`}></div>
-                <div className="text-[12px] font-semibold text-text flex-1 truncate">{h.name}</div>
-                <div className={`text-[10px] font-semibold ${
-                  h.status === 'confirmed' ? 'text-green' :
-                  h.status === 'calling' ? 'text-amber' : 'text-text3'
-                }`}>
-                  {h.status === 'confirmed' ? 'Confirmed ✓' :
-                   h.status === 'calling' ? 'Calling...' : 'Waiting...'}
+            displayHospitals.map((h) => {
+              const config = STATUS_CONFIG[h.status] || STATUS_CONFIG.waiting;
+              const cardClass =
+                h.status === 'calling' ? 'card-calling' :
+                h.status === 'confirmed' ? 'card-confirmed' : '';
+
+              return (
+                <div
+                  key={h.id}
+                  className={`flex items-center gap-[12px] p-[12px_14px] bg-white rounded-xl border transition-all duration-300 ${config.borderClass || 'border-slate-100'} ${cardClass}`}
+                >
+                  {/* Status dot */}
+                  <div className={`w-[10px] h-[10px] rounded-full shrink-0 transition-colors duration-300 ${config.dotClass}`}></div>
+
+                  {/* Hospital name */}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold text-text truncate">{h.name}</div>
+                  </div>
+
+                  {/* Status badge */}
+                  <div className={`text-[11px] font-bold shrink-0 transition-colors duration-300 ${config.textClass}`}>
+                    {config.label}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
               <div className="w-4 h-4 border-2 border-slate-300 border-t-brand rounded-full animate-spin"></div>

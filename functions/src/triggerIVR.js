@@ -1,12 +1,11 @@
-const functions = require("firebase-functions");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
-const axios = require("axios");
+const twilio = require("twilio");
 const { geohashQueryBounds, distanceBetween } = require("geofire-common");
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const RADIUS_KM = 10;
 const MAX_HOSPITALS = 10;
-const CALL_TIME_LIMIT = 30;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -64,177 +63,184 @@ async function queryNearbyHospitals(db, lat, lng) {
 }
 
 /**
- * Place a single Exotel IVR call to one hospital.
+ * Place a single Twilio IVR call to one hospital.
  */
-async function callHospital(config, hospital, emergencyId) {
-  const { sid, token, callerId, appletUrl } = config;
-
-  const customField = JSON.stringify({
-    emergencyId,
-    hospitalId: hospital.id,
-  });
-
-  const url = `https://api.exotel.com/v1/Accounts/${sid}/Calls/connect.json`;
-
-  const params = new URLSearchParams();
-  params.append("From", hospital.exotelNumber || hospital.phone);
-  params.append("To", callerId);
-  params.append("CallerId", callerId);
-  params.append("CustomField", customField);
-  params.append("TimeLimit", String(CALL_TIME_LIMIT));
-
-  if (appletUrl) {
-    // Append context so the ExoML applet knows which emergency/hospital
-    const dynamicUrl =
-      appletUrl +
-      "?emergencyId=" + encodeURIComponent(emergencyId) +
-      "&hospitalId=" + encodeURIComponent(hospital.id);
-    params.append("Url", dynamicUrl);
+async function callHospital(twilioClient, twilioPhone, webhookUrl, hospital, emergencyId) {
+  const phoneNumber = hospital.phone || hospital.exotelNumber;
+  if (!phoneNumber) {
+    console.log(`No phone for hospital ${hospital.id}`);
+    return { success: false, hospitalId: hospital.id };
   }
 
-  const response = await axios.post(url, params.toString(), {
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    auth: { username: sid, password: token },
-    timeout: 15000,
+  const emergencyTypeLabel = {
+    cardiac: "cardiac yani dil ka",
+    accident: "accident ya trauma ka",
+    newborn: "naye bachche ka",
+    other: "medical"
+  };
+
+  try {
+    const call = await twilioClient.calls.create({
+      to: phoneNumber,
+      from: twilioPhone,
+      twiml: `<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="Polly.Aditi" language="hi-IN">
+            Namaste. Yeh MediConnect ki taraf se 
+            emergency alert hai. Aapke paas ek 
+            ${emergencyTypeLabel[hospital.emergencyType] || "medical"} 
+            emergency patient aa raha hai. 
+            Agar aap patient le sakte hain 
+            to abhi 1 dabayein. 
+            Nahi le sakte to 2 dabayein.
+          </Say>
+          <Gather 
+            numDigits="1" 
+            action="${webhookUrl}?emergencyId=${emergencyId}&amp;hospitalId=${hospital.id}"
+            method="POST"
+            timeout="15">
+          </Gather>
+          <Say voice="Polly.Aditi" language="hi-IN">
+            Koi jawab nahi aaya. Dhanyavaad.
+          </Say>
+        </Response>`,
+      timeout: 30,
+    });
+
+    console.log(`Call placed to ${hospital.name}: ${call.sid}`);
+    return { success: true, hospitalId: hospital.id, callSid: call.sid };
+  } catch (err) {
+    console.error(`Call failed for ${hospital.name}:`, err.message);
+    return { success: false, hospitalId: hospital.id, error: err.message };
+  }
+}
+
+// ─── Cloud Function (v2 syntax) ─────────────────────────────────────────────
+
+exports.triggerIVR = onDocumentCreated("emergencies/{emergencyId}", async (event) => {
+  const twilioClient = twilio(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN
+  );
+  const webhookUrl = process.env.TWILIO_WEBHOOK_URL;
+  const fromPhone = process.env.TWILIO_PHONE_NUMBER;
+
+  const db = admin.firestore();
+  const emergencyId = event.params.emergencyId;
+  const docRef = db.collection("emergencies").doc(emergencyId);
+  const data = event.data.data();
+
+  if (!data) {
+    await docRef.update({
+      ivrStatus: "error",
+      ivrError: "Emergency data is null",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return null;
+  }
+
+  // ── 1. Validate Twilio credentials ──────────────────────────
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !fromPhone) {
+    await docRef.update({
+      ivrStatus: "error",
+      ivrError: "Twilio credentials not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER)",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return null;
+  }
+
+  // ── 2. Geohash radius query for nearby hospitals ────────────
+  const lat = data.userLat || data.lat;
+  const lng = data.userLng || data.lng;
+
+  if (!lat || !lng) {
+    await docRef.update({
+      ivrStatus: "error",
+      ivrError: "Emergency missing lat/lng coordinates",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return null;
+  }
+
+  let hospitals;
+  try {
+    hospitals = await queryNearbyHospitals(db, lat, lng);
+  } catch (err) {
+    await docRef.update({
+      ivrStatus: "error",
+      ivrError: "Hospital query failed: " + err.message,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return null;
+  }
+
+  if (hospitals.length === 0) {
+    await docRef.update({
+      ivrStatus: "error",
+      ivrError: "No eligible hospitals found within " + RADIUS_KM + " km",
+      hospitalsContacted: [],
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return null;
+  }
+
+  // ── 3. Update emergency doc with contacted hospital IDs ─────
+  const hospitalIds = hospitals.map((h) => h.id);
+
+  await docRef.update({
+    hospitalsContacted: hospitalIds,
+    status: "calling",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  return {
-    hospitalId: hospital.id,
-    hospitalName: hospital.name || "Unknown",
-    status: "initiated",
-    callSid: response.data?.Call?.Sid || null,
-  };
-}
+  // ── 4. Call each hospital via Twilio (parallel) ─────────────
+  const results = await Promise.allSettled(
+    hospitals.map((hospital) =>
+      callHospital(twilioClient, fromPhone, webhookUrl, hospital, emergencyId).catch((err) => ({
+        hospitalId: hospital.id,
+        hospitalName: hospital.name || "Unknown",
+        status: "failed",
+        callSid: null,
+        error: err.message,
+      }))
+    )
+  );
 
-// ─── Cloud Function factory ─────────────────────────────────────────────────
+  // Collect outcomes
+  const callResults = results.map((outcome) => {
+    if (outcome.status === "fulfilled") return outcome.value;
+    return {
+      hospitalId: "unknown",
+      hospitalName: "unknown",
+      status: "failed",
+      callSid: null,
+      error: outcome.reason?.message || "Promise rejected",
+    };
+  });
 
-function triggerIVR(db) {
-  return functions.firestore
-    .document("emergencies/{emergencyId}")
-    .onCreate(async (snap, context) => {
-      const emergencyId = context.params.emergencyId;
-      const docRef = db.collection("emergencies").doc(emergencyId);
-      const data = snap.data();
+  const successCount = callResults.filter((r) => r.success === true).length;
+  const failCount = callResults.filter((r) => r.success === false).length;
 
-      if (!data) {
-        await docRef.update({
-          ivrStatus: "error",
-          ivrError: "Emergency data is null",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return null;
-      }
+  // Build callSid map for tracking
+  const callSids = {};
+  callResults.forEach((r) => {
+    if (r.callSid && r.hospitalId) {
+      callSids[r.hospitalId] = r.callSid;
+    }
+  });
 
-      // ── 1. Read Exotel config from env ──────────────────────────
-      const sid = process.env.EXOTEL_SID;
-      const token = process.env.EXOTEL_TOKEN;
-      const callerId = process.env.EXOTEL_CALLER_ID;
-      const appletUrl = process.env.EXOTEL_APPLET_URL || "";
+  await docRef.update({
+    ivrStatus: failCount === callResults.length ? "all_failed" : "calls_initiated",
+    ivrResults: {
+      total: callResults.length,
+      success: successCount,
+      failed: failCount,
+      callSids,
+    },
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
 
-      if (!sid || !token || !callerId) {
-        await docRef.update({
-          ivrStatus: "error",
-          ivrError: "Exotel credentials not configured (EXOTEL_SID / EXOTEL_TOKEN / EXOTEL_CALLER_ID)",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return null;
-      }
+  return null;
+});
 
-      const config = { sid, token, callerId, appletUrl };
-
-      // ── 2. Geohash radius query for nearby hospitals ────────────
-      const lat = data.userLat || data.lat;
-      const lng = data.userLng || data.lng;
-
-      if (!lat || !lng) {
-        await docRef.update({
-          ivrStatus: "error",
-          ivrError: "Emergency missing lat/lng coordinates",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return null;
-      }
-
-      let hospitals;
-      try {
-        hospitals = await queryNearbyHospitals(db, lat, lng);
-      } catch (err) {
-        await docRef.update({
-          ivrStatus: "error",
-          ivrError: "Hospital query failed: " + err.message,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return null;
-      }
-
-      if (hospitals.length === 0) {
-        await docRef.update({
-          ivrStatus: "error",
-          ivrError: "No eligible hospitals found within " + RADIUS_KM + " km",
-          hospitalsContacted: [],
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return null;
-      }
-
-      // ── 3. Update emergency doc with contacted hospital IDs ─────
-      const hospitalIds = hospitals.map((h) => h.id);
-
-      await docRef.update({
-        hospitalsContacted: hospitalIds,
-        status: "calling",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      // ── 4. Call each hospital via Exotel (parallel) ─────────────
-      const results = await Promise.allSettled(
-        hospitals.map((hospital) =>
-          callHospital(config, hospital, emergencyId).catch((err) => ({
-            hospitalId: hospital.id,
-            hospitalName: hospital.name || "Unknown",
-            status: "failed",
-            callSid: null,
-            error: err.message,
-          }))
-        )
-      );
-
-      // Collect outcomes
-      const callResults = results.map((outcome) => {
-        if (outcome.status === "fulfilled") return outcome.value;
-        return {
-          hospitalId: "unknown",
-          hospitalName: "unknown",
-          status: "failed",
-          callSid: null,
-          error: outcome.reason?.message || "Promise rejected",
-        };
-      });
-
-      const successCount = callResults.filter((r) => r.status === "initiated").length;
-      const failCount = callResults.filter((r) => r.status === "failed").length;
-
-      // Build callSid map for tracking
-      const callSids = {};
-      callResults.forEach((r) => {
-        if (r.callSid && r.hospitalId) {
-          callSids[r.hospitalId] = r.callSid;
-        }
-      });
-
-      await docRef.update({
-        ivrStatus: failCount === callResults.length ? "all_failed" : "calls_initiated",
-        ivrResults: {
-          total: callResults.length,
-          success: successCount,
-          failed: failCount,
-          callSids,
-        },
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      return null;
-    });
-}
-
-module.exports = { triggerIVR, queryNearbyHospitals };
+module.exports = { triggerIVR: exports.triggerIVR, queryNearbyHospitals };

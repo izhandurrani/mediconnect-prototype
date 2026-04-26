@@ -3,52 +3,66 @@ import LoginScreen from './screens/LoginScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import LanguageScreen from './screens/LanguageScreen';
 import HomeScreen from './screens/HomeScreen';
-import EmergencyScreen from './screens/EmergencyScreen';
-import CallingScreen from './screens/CallingScreen';
-import HospitalsScreen from './screens/HospitalsScreen';
 import HospitalDetailScreen from './screens/HospitalDetailScreen';
-import DetailScreen from './screens/DetailScreen';
-import AlertedScreen from './screens/AlertedScreen';
 import SchemesScreen from './screens/SchemesScreen';
+
+/* ── New 4-step emergency flow ── */
+import VoiceInputScreen from './pages/VoiceInputScreen';
+import NearbyHospitalsScreen from './pages/NearbyHospitalsScreen';
+import CallingScreen from './pages/CallingScreen';
+import ResultsScreen from './pages/ResultsScreen';
+import SuccessScreen from './pages/SuccessScreen';
+
 import Navigation from './components/Navigation';
 import { AppProvider } from './context/AppContext';
 
 /**
  * ScreenRouter — switch-based routing.
- * Only the matched screen component is instantiated; all others are unmounted.
- * HospitalDetailScreen is wrapped in <Routes>/<Route> because it uses useParams().
+ *
+ * NEW EMERGENCY FLOW:
+ *   /voice → /nearby → /calling → /results → /success
+ *
+ * Each step passes state via React Router navigation state.
  */
 function ScreenRouter() {
   const { pathname } = useLocation();
   const hospitalMatch = matchPath('/hospital/:id', pathname);
 
   switch (true) {
+    /* ── Auth ── */
     case pathname === '/':
       return <LoginScreen />;
     case pathname === '/signup':
       return <SignUpScreen />;
     case pathname === '/language':
       return <LanguageScreen />;
+
+    /* ── App ── */
     case pathname === '/home':
       return <HomeScreen />;
-    case pathname === '/emergency':
-      return <EmergencyScreen />;
-    case pathname === '/calling':
-      return <CallingScreen />;
-    case pathname === '/hospitals':
-      return <HospitalsScreen />;
-    case pathname === '/detail':
-      return <DetailScreen />;
-    case pathname === '/alerted':
-      return <AlertedScreen />;
     case pathname === '/schemes':
       return <SchemesScreen />;
+
+    /* ── New emergency flow ── */
+    case pathname === '/voice':
+      return <VoiceInputScreen />;
+    case pathname === '/nearby':
+      return <NearbyHospitalsScreen />;
+    case pathname === '/calling':
+      return <CallingScreen />;
+    case pathname === '/results':
+      return <ResultsScreen />;
+    case pathname === '/success':
+      return <SuccessScreen />;
+
+    /* ── Hospital detail (uses useParams) ── */
     case !!hospitalMatch:
       return (
         <Routes>
           <Route path="/hospital/:id" element={<HospitalDetailScreen />} />
         </Routes>
       );
+
     default:
       return <Navigate to="/" replace />;
   }

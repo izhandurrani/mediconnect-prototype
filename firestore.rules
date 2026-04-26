@@ -1,0 +1,74 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper: is the caller a signed-in user? ──
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // ── Helper: does the caller own this resource? ──
+    function isOwner(userId) {
+      return isAuth() && request.auth.uid == userId;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 1. USERS — each user can only read/write their own profile
+    // ═══════════════════════════════════════════════════════════════
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 2. HOSPITALS — any authenticated user can read, nobody writes
+    //    from client (seeded via Admin SDK / backend scripts)
+    // ═══════════════════════════════════════════════════════════════
+    match /hospitals/{hospitalId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3. EMERGENCIES — owner can read/create, Cloud Functions can
+    //    update via Admin SDK (bypasses rules).
+    //    twilioWebhook uses Admin SDK so it bypasses these rules.
+    // ═══════════════════════════════════════════════════════════════
+    match /emergencies/{emergencyId} {
+      // Owner can read their own emergency
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+
+      // Owner can create a new emergency (must set userId to self)
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+
+      // Owner can update specific fields (selectedHospital, status)
+      // Cloud Function updates (ivrResponses, confirmed, etc.) go
+      // through Admin SDK and bypass these rules entirely.
+      allow update: if isAuth()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId;
+
+      // No client-side delete
+      allow delete: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 4. EMERGENCY_ALERTS — authenticated users can read and create.
+    //    Updates come from twilioWebhook via Admin SDK (bypasses rules).
+    // ═══════════════════════════════════════════════════════════════
+    match /emergency_alerts/{alertId} {
+      allow read: if isAuth();
+      allow create: if isAuth();
+      allow update, delete: if false;
+      // Note: twilioWebhook updates via Admin SDK (server-side),
+      // which bypasses all security rules.
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Default: deny everything else
+    // ═══════════════════════════════════════════════════════════════
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
