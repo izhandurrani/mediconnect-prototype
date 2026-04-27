@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -11,11 +11,13 @@ export default function ResultsScreen() {
   const {
     emergencyId,
     hospitals = [],
-    emergencyType = 'other',
   } = location.state || {};
 
   const [alerts, setAlerts] = useState({});
-  const [selecting, setSelecting] = useState(null);
+  const [selectedHospitalId, setSelectedHospitalId] = useState(null);
+  const [sendingPreAlert, setSendingPreAlert] = useState(null);
+  const [showPreAlertModal, setShowPreAlertModal] = useState(false);
+  const [alertedHospital, setAlertedHospital] = useState(null);
 
   // ── Keep listening to emergency_alerts for late confirmations ──
   useEffect(() => {
@@ -46,26 +48,38 @@ export default function ResultsScreen() {
     (h) => alerts[h.id]?.status === 'confirmed'
   );
 
-  // ── Select a hospital → update Firestore → navigate to success ──
-  async function handleSelect(hospital) {
-    if (selecting) return;
-    setSelecting(hospital.id);
+  function handleSelect(hospital) {
+    setSelectedHospitalId((current) => (current === hospital.id ? null : hospital.id));
+  }
+
+  // ── Send pre-alert only after explicit confirmation ──
+  async function handleSendPreAlert(hospital) {
+    if (sendingPreAlert) return;
+    setSendingPreAlert(hospital.id);
 
     try {
       await selectHospitalForEmergency(emergencyId, hospital.id);
-      navigate('/success', {
-        state: {
-          hospitalName: hospital.name,
-          hospitalPhone: hospital.phone,
-          hospitalLat: hospital.lat,
-          hospitalLng: hospital.lng,
-          emergencyId,
-        },
-      });
+      setAlertedHospital(hospital);
+      setShowPreAlertModal(true);
     } catch (err) {
-      console.error('Hospital selection failed:', err);
-      setSelecting(null);
+      console.error('Pre-alert failed:', err);
+    } finally {
+      setSendingPreAlert(null);
     }
+  }
+
+  function handleContinueToNavigation() {
+    if (!alertedHospital) return;
+
+    navigate('/success', {
+      state: {
+        hospitalName: alertedHospital.name,
+        hospitalPhone: alertedHospital.phone,
+        hospitalLat: alertedHospital.lat,
+        hospitalLng: alertedHospital.lng,
+        emergencyId,
+      },
+    });
   }
 
   return (
@@ -99,11 +113,14 @@ export default function ResultsScreen() {
                 h.name?.toLowerCase().includes('civil');
 
               const activeCaps = Object.entries(h.capabilities || {}).filter(([, v]) => v);
+              const isExpanded = selectedHospitalId === h.id;
 
               return (
                 <div
                   key={h.id}
-                  className="bg-white rounded-2xl border-2 border-green-300 p-5 shadow-sm animate-fade-up"
+                  className={`bg-white rounded-2xl border-2 p-5 shadow-sm animate-fade-up transition-all ${
+                    isExpanded ? 'border-green-500 shadow-lg shadow-green-500/10' : 'border-green-300'
+                  }`}
                 >
                   {/* Name row */}
                   <div className="flex items-start gap-3">
@@ -139,21 +156,62 @@ export default function ResultsScreen() {
                     </div>
                   )}
 
-                  {/* Select button */}
-                  <button
-                    onClick={() => handleSelect(h)}
-                    disabled={selecting === h.id}
-                    className="w-full mt-4 py-3 bg-green-500 text-white border-none rounded-xl text-sm font-bold cursor-pointer shadow-lg shadow-green-500/20 hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-[0.97] disabled:opacity-60 flex items-center justify-center gap-2"
-                  >
-                    {selecting === h.id ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Selecting...
-                      </>
-                    ) : (
-                      'Select This Hospital →'
-                    )}
-                  </button>
+                  {!isExpanded ? (
+                    <button
+                      onClick={() => handleSelect(h)}
+                      className="w-full mt-4 py-3 bg-green-500 text-white border-none rounded-xl text-sm font-bold cursor-pointer shadow-lg shadow-green-500/20 hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-[0.97] flex items-center justify-center gap-2"
+                    >
+                      Select This Hospital →
+                    </button>
+                  ) : (
+                    <div className="mt-4 ml-11 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                        Selected Hospital
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-800">
+                        Review and send pre-alert before navigation.
+                      </div>
+
+                      <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                        <div className="rounded-xl bg-white px-3 py-2 border border-slate-200">
+                          {h.distanceKm} km away
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2 border border-slate-200">
+                          ~{Math.max(2, Math.round(h.distanceKm * 2.5))} min travel
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2 border border-slate-200">
+                          {isGovt ? 'Government hospital' : 'Private hospital'}
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2 border border-slate-200">
+                          {h.phone ? h.phone : 'Phone available on arrival'}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-col gap-2">
+                        {h.phone && (
+                          <a
+                            href={`tel:${h.phone}`}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-center text-sm font-bold text-slate-700 no-underline transition-transform active:scale-[0.98]"
+                          >
+                            Call Hospital
+                          </a>
+                        )}
+                        <button
+                          onClick={() => handleSendPreAlert(h)}
+                          disabled={sendingPreAlert === h.id}
+                          className="w-full rounded-xl border-none bg-brand px-4 py-3 text-sm font-bold text-white shadow-lg shadow-brand/20 transition-all active:scale-[0.98] disabled:opacity-60"
+                        >
+                          {sendingPreAlert === h.id ? 'Sending Pre-Alert...' : 'Send Pre-Alert'}
+                        </button>
+                        <button
+                          onClick={() => setSelectedHospitalId(null)}
+                          className="w-full rounded-xl border border-slate-200 bg-transparent px-4 py-3 text-sm font-semibold text-slate-500 transition-colors hover:bg-white"
+                        >
+                          Choose Another Hospital
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -191,6 +249,32 @@ export default function ResultsScreen() {
           </div>
         )}
       </div>
+
+      {showPreAlertModal && alertedHospital && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-green-600">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+
+            <div className="mt-4 text-center">
+              <div className="text-xl font-black text-slate-800">Pre Alert sent to hospital</div>
+              <div className="mt-2 text-sm leading-relaxed text-slate-500">
+                {alertedHospital.name} has been notified. You can continue to navigation now.
+              </div>
+            </div>
+
+            <button
+              onClick={handleContinueToNavigation}
+              className="mt-6 w-full rounded-2xl border-none bg-brand py-3.5 text-sm font-bold text-white shadow-lg shadow-brand/20 transition-transform active:scale-[0.98]"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import { ArrowLeft, ChevronDown, ChevronUp, AlertCircle, CheckCircle2 } from "lucide-react";
 
 const schemesData = [
@@ -52,6 +54,7 @@ export default function SchemesScreen() {
   const [nonEligible, setNonEligible] = useState([]);
   const [expanded, setExpanded] = useState(null);
   const [showResults, setShowResults] = useState(false);
+  const [hospitalsByScheme, setHospitalsByScheme] = useState({});
 
   const getAge = (dob) => {
     if (!dob) return 0;
@@ -59,7 +62,28 @@ export default function SchemesScreen() {
     return Math.floor(diff / (1000 * 60 * 60 * 24 * 365));
   };
 
-  const handleSearch = () => {
+  async function loadHospitalsByScheme() {
+    const snap = await getDocs(collection(db, 'hospitals'));
+    const grouped = {};
+
+    snap.docs.forEach((docSnap) => {
+      const hospital = { id: docSnap.id, ...docSnap.data() };
+      const schemes = hospital.schemes || [];
+
+      schemes.forEach((schemeId) => {
+        if (!grouped[schemeId]) grouped[schemeId] = [];
+        grouped[schemeId].push(hospital);
+      });
+    });
+
+    Object.keys(grouped).forEach((schemeId) => {
+      grouped[schemeId].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    });
+
+    return grouped;
+  }
+
+  const handleSearch = async () => {
     const { dob, income, state, issue } = formData;
     if (!dob || !income || !state || !issue) {
       setError("Please fill all required fields to check eligibility.");
@@ -69,7 +93,7 @@ export default function SchemesScreen() {
     setLoading(true);
     setError("");
 
-    setTimeout(() => {
+    try {
       const age = getAge(dob);
       const userIncome = Number(income);
       let matched = [];
@@ -104,11 +128,17 @@ export default function SchemesScreen() {
         });
       }
 
+      const groupedHospitals = await loadHospitalsByScheme();
+      setHospitalsByScheme(groupedHospitals);
       setResults(matched);
       setNonEligible(unmatched);
-      setLoading(false);
       setShowResults(true);
-    }, 500);
+    } catch (err) {
+      console.error('Hospital scheme lookup failed:', err);
+      setError("Could not load scheme hospitals. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
@@ -207,7 +237,16 @@ export default function SchemesScreen() {
 
             {results.length > 0 ? (
               <div className="space-y-3">
-                {results.map(s => <SchemeCard key={s.id} scheme={s} isEligible={true} expanded={expanded} setExpanded={setExpanded} />)}
+                {results.map(s => (
+                  <SchemeCard
+                    key={s.id}
+                    scheme={s}
+                    isEligible={true}
+                    expanded={expanded}
+                    setExpanded={setExpanded}
+                    hospitals={hospitalsByScheme[s.id] || []}
+                  />
+                ))}
               </div>
             ) : (
               <div className="mt-4">
@@ -217,7 +256,16 @@ export default function SchemesScreen() {
                 </div>
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">Failure Details:</h4>
                 <div className="space-y-3">
-                  {nonEligible.map(s => <SchemeCard key={s.id} scheme={s} isEligible={false} expanded={expanded} setExpanded={setExpanded} />)}
+                  {nonEligible.map(s => (
+                    <SchemeCard
+                      key={s.id}
+                      scheme={s}
+                      isEligible={false}
+                      expanded={expanded}
+                      setExpanded={setExpanded}
+                      hospitals={[]}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -228,8 +276,10 @@ export default function SchemesScreen() {
   );
 }
 
-function SchemeCard({ scheme, isEligible, expanded, setExpanded }) {
+function SchemeCard({ scheme, isEligible, expanded, setExpanded, hospitals = [] }) {
   const isOpen = expanded === scheme.id;
+  const visibleHospitals = hospitals.slice(0, 6);
+
   return (
     <div className={`bg-white rounded-2xl border transition-all ${isEligible ? "border-green-200 shadow-sm" : "border-slate-200"}`}>
       <div className="p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpanded(isOpen ? null : scheme.id)}>
@@ -264,6 +314,45 @@ function SchemeCard({ scheme, isEligible, expanded, setExpanded }) {
             <p className="text-[10px] font-bold text-slate-400 uppercase">Process:</p>
             <p className="text-xs text-slate-700 font-medium">{scheme.apply}</p>
           </div>
+          {isEligible && (
+            <div className="mt-4 p-3 bg-white rounded-xl border border-slate-200">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Hospitals accepting this scheme</p>
+                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
+                  {hospitals.length}
+                </span>
+              </div>
+
+              {hospitals.length > 0 ? (
+                <div className="space-y-2">
+                  {visibleHospitals.map((hospital) => (
+                    <div key={hospital.id} className="flex items-start justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">{hospital.name || 'Hospital'}</div>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          {hospital.city || 'Maharashtra'}
+                          {hospital.phone ? ` · ${hospital.phone}` : ''}
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full shrink-0">
+                        Accepted
+                      </span>
+                    </div>
+                  ))}
+
+                  {hospitals.length > visibleHospitals.length && (
+                    <p className="text-[10px] font-bold text-slate-400 px-1">
+                      +{hospitals.length - visibleHospitals.length} more hospitals accept this scheme
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 font-medium">
+                  No hospitals are currently listed for this scheme in the app database.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

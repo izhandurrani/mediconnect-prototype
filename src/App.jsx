@@ -4,6 +4,7 @@ import SignUpScreen from './screens/SignUpScreen';
 import LanguageScreen from './screens/LanguageScreen';
 import HomeScreen from './screens/HomeScreen';
 import HospitalDetailScreen from './screens/HospitalDetailScreen';
+import HospitalsScreen from './screens/HospitalsScreen';
 import SchemesScreen from './screens/SchemesScreen';
 
 /* ── New 4-step emergency flow ── */
@@ -40,10 +41,14 @@ function ScreenRouter() {
     /* ── App ── */
     case pathname === '/home':
       return <HomeScreen />;
+    case pathname === '/hospitals':
+      return <HospitalsScreen />;
     case pathname === '/schemes':
       return <SchemesScreen />;
 
     /* ── New emergency flow ── */
+    case pathname === '/emergency':
+      return <VoiceInputScreen />;
     case pathname === '/voice':
       return <VoiceInputScreen />;
     case pathname === '/nearby':

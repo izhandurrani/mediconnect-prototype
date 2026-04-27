@@ -7,7 +7,7 @@ import { X, Phone, User, Users, Droplets, Briefcase, IndianRupee, Check } from '
 const OCCUPATIONS = ['Student', 'Employed', 'Self-Employed', 'Farmer', 'Unemployed', 'Retired', 'Other'];
 
 export default function ProfileDrawer({ isOpen, onClose }) {
-  const { userProfile, setUserProfile, activeSchemes } = useAppContext();
+  const { userProfile, setUserProfile } = useAppContext();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState({ ...userProfile });
   const [saving, setSaving] = useState(false);
@@ -243,20 +243,6 @@ export default function ProfileDrawer({ isOpen, onClose }) {
                 )}
               </div>
             </div>
-
-            {/* Active Schemes */}
-            {activeSchemes.length > 0 && (
-              <>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-3 mb-1">Active Schemes</div>
-                <div className="flex flex-wrap gap-2">
-                  {activeSchemes.map((s) => (
-                    <span key={s} className="bg-green/10 text-green px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                      {s === 'ab' ? 'PM-JAY' : s === 'mj' ? 'MJPJAY' : s === 'pmjjby' ? 'PMJJBY' : s}
-                    </span>
-                  ))}
-                </div>
-              </>
-            )}
           </div>
 
           {/* Footer Actions */}

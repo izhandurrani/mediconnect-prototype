@@ -64,7 +64,7 @@ exports.twilioWebhook = onRequest(async (req, res) => {
       return res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Aditi" language="hi-IN">
-    Bahut shukriya. Patient aapke hospital ki taraf aa raha hai. Tayaar rahein.
+    Bahut shukriya. Dhanyavaad.
   </Say>
   <Hangup/>
 </Response>`);

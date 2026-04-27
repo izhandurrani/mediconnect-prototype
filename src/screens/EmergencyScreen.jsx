@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import { useEmergency } from '../hooks/useEmergency';
+import { useGeolocation } from '../hooks/useGeolocation';
 import { auth } from '../lib/firebase';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -19,17 +20,8 @@ export default function EmergencyScreen() {
 
   const { createEmergency } = useEmergency();
 
-  // Simple geolocation helper (no external hook dependency needed)
-  function getUserLocation() {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) return reject(new Error('No geolocation'));
-      navigator.geolocation.getCurrentPosition(
-        (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
-        (e) => reject(e),
-        { timeout: 10000, maximumAge: 60000 }
-      );
-    });
-  }
+  // Centralized geolocation hook (handles all edge cases)
+  const { coords: geoCoords } = useGeolocation();
 
   // Local state
   const [listening, setListening] = useState(false);
@@ -164,17 +156,9 @@ export default function EmergencyScreen() {
     setError('');
 
     try {
-      // 1. Get location
-      let loc = location;
-      if (!loc?.lat || !loc?.lng) {
-        try {
-          loc = await getUserLocation();
-          setLocation(loc);
-        } catch {
-          loc = { lat: 19.8762, lng: 75.3433 };
-          setLocation(loc);
-        }
-      }
+      // 1. Get location from hook (always populated — real or fallback)
+      const loc = geoCoords || { lat: 19.8762, lng: 75.3433 };
+      setLocation(loc);
 
       // 2. Store in context
       setEmergencyType(null); // voice-based, no type grid

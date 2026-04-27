@@ -170,9 +170,9 @@ export function useGoogleMaps() {
           reject(error);
         },
         {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 30000,
+          enableHighAccuracy: false,  // WiFi/cell = fast + works indoors
+          timeout: 5000,
+          maximumAge: 300000,         // Accept 5-min-old cached position
         }
       );
     });

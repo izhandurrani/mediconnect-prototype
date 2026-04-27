@@ -46,19 +46,57 @@ export default function NearbyHospitalsScreen() {
   // Live emergency doc (for calling phase)
   const [emergencyDoc, setEmergencyDoc] = useState(null);
 
-  // ── Get GPS location ──
+  // ── Get GPS location (with timeout fallback for HTTP/localhost) ──
   useEffect(() => {
     if (location?.lat && location?.lng) return;
 
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => setLocation({ lat: 19.8762, lng: 75.3433 }), // Aurangabad fallback
-        { timeout: 10000, maximumAge: 60000 }
-      );
-    } else {
-      setLocation({ lat: 19.8762, lng: 75.3433 });
+    let settled = false;
+
+    // Fallback timer — if nothing happens in 5s, use Aurangabad coords
+    const fallbackTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        console.log('Location timeout — using fallback');
+        setLocation({ lat: 19.8762, lng: 75.3433, isApproximate: true });
+      }
+    }, 5000);
+
+    if (!navigator.geolocation) {
+      settled = true;
+      clearTimeout(fallbackTimer);
+      setLocation({ lat: 19.8762, lng: 75.3433, isApproximate: true });
+      return;
     }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(fallbackTimer);
+          setLocation({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
+        }
+      },
+      (err) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(fallbackTimer);
+          console.log('Location error:', err.message, '— using fallback');
+          setLocation({ lat: 19.8762, lng: 75.3433, isApproximate: true });
+        }
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 4000,
+        maximumAge: 300000,
+      }
+    );
+
+    return () => {
+      clearTimeout(fallbackTimer);
+    };
   }, [location, setLocation]);
 
   // ── Fetch hospitals from Firestore ──
@@ -230,7 +268,7 @@ export default function NearbyHospitalsScreen() {
           </div>
           <div className="text-xs text-slate-400 font-medium">
             {phase === 'browse'
-              ? `${hospitals.length} hospitals found · ${emergencyType || 'Emergency'}`
+              ? `${hospitals.length} hospitals found · ${location?.isApproximate ? 'Aurangabad (approx)' : 'Your location'}`
               : statusCounts
                 ? `${statusCounts.confirmed} confirmed · ${statusCounts.calling} calling · ${statusCounts.rejected + statusCounts.noResponse} pending`
                 : 'Initiating calls...'}
@@ -276,7 +314,7 @@ export default function NearbyHospitalsScreen() {
               </div>
             ))}
           </div>
-        ) : error ? (
+        ) : error && !error.toLowerCase().includes('location') ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="1.5">
               <circle cx="12" cy="12" r="10" />

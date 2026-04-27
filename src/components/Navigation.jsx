@@ -1,4 +1,3 @@
-import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function Navigation() {
@@ -16,7 +15,7 @@ export default function Navigation() {
       )
     },
     { 
-      path: '/emergency', 
+      path: '/voice', 
       label: 'SOS', 
       icon: (
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -52,12 +51,12 @@ export default function Navigation() {
   const isActive = (path) => location.pathname === path;
 
   // Only show bottom nav on main app screens (not login/language)
-  const showNav = ['/home', '/emergency', '/hospitals', '/schemes'].some(p => location.pathname.startsWith(p)) || location.pathname.startsWith('/hospital');
+  const showNav = ['/home', '/hospitals', '/schemes'].some(p => location.pathname.startsWith(p)) || location.pathname.startsWith('/hospital');
 
   if (!showNav) return null;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-t border-slate-100 flex items-center justify-around py-2.5 px-4 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-t border-slate-100 flex items-center justify-around py-2.5 px-4 shadow-[0_-4px_20px_rgba(0,0,0,0.06)] md:hidden">
       {navItems.map((item) => (
         <button
           key={item.path}

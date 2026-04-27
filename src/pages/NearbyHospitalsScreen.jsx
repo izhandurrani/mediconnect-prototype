@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { useAppContext } from '../context/AppContext';
 
 /* ── Haversine distance (km) ── */
 function haversineDistance(lat1, lng1, lat2, lng2) {
@@ -58,15 +59,19 @@ const SCHEME_BADGES = {
 
 export default function NearbyHospitalsScreen() {
   const navigate = useNavigate();
-  const location = useLocation();
+  const routeLocation = useLocation();
+  const { location: contextLocation, activeScheme } = useAppContext();
 
   const {
     emergencyType = 'other',
     transcript = '',
-    userLocation,
+    userLocation: routeUserLocation,
     language = 'en',
-    scheme = 'mj',
-  } = location.state || {};
+    scheme: routeScheme,
+  } = routeLocation.state || {};
+
+  const userLocation = routeUserLocation || contextLocation;
+  const scheme = routeScheme || activeScheme || 'mj';
 
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
