@@ -113,7 +113,3 @@ firebase deploy      # deploy everything
 - Hospital data is manually seeded, no live govt API integration yet
 
 ---
-
-## License
-
-MIT
