@@ -15,7 +15,7 @@ flowchart TD
 
     A -->|"create /emergencies doc"| C[("🔥 Cloud Firestore")]
     C -->|"onDocumentCreated trigger"| D["⚙️ Cloud Function (triggerIVR)"]
-    D -->|"Gemini generates Hindi summary"| B
+    D -->|"Gemini generates summary"| B
     D -->|"parallel IVR calls"| E["📞 Twilio IVR"]
     E -->|"call hospitals"| F["🏥 Hospital Phones"]
     F -->|"press 1=accept / 2=reject"| G["🔗 Webhook"]
