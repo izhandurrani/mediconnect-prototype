@@ -11,6 +11,7 @@ import {
   MapPin,
   Mic,
   RotateCcw,
+  Sparkles,
 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 
@@ -162,6 +163,7 @@ export default function VoiceInputScreen() {
   const [listening, setListening] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [detectedType, setDetectedType] = useState(null);
+  const [aiTriageMessage, setAiTriageMessage] = useState(null);
 
   const recognitionRef = useRef(null);
   const transcriptRef = useRef('');
@@ -193,59 +195,116 @@ export default function VoiceInputScreen() {
     }, 300);
   }, []);
 
-  const translateToEnglish = useCallback(async (text) => {
+  const processWithGemini = useCallback(async (text) => {
     setTranslating(true);
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) {
+      if (!apiKey || apiKey.startsWith('AIza...')) {
+        console.error("Gemini API Key is missing or invalid placeholder.");
         setEnglishTranscript(text);
+        setAiTriageMessage(selectedLanguage === 'hi' ? "API Key set nahi hai. Kripya neeche apni emergency khud select karein." : "API Key is missing. Please manually select the emergency type below.");
         applyDetection(text);
         return;
       }
 
+      const prompt = `You are an AI Emergency Triage Assistant. A user is reporting a medical emergency. 
+Input: "${text}"
+Selected Language: ${selectedLanguage === 'hi' ? 'Hindi' : 'English'}
+
+Return a JSON object exactly like this:
+{
+  "english_translation": "Translate the input to English accurately if not already in English",
+  "ai_message": "Provide a short, empathetic 1-2 sentence reassurance in the Selected Language telling the user you understand the emergency and are finding the right help.",
+  "emergency_category": "Identify the best category from: cardiac, accident, newborn, stroke, allergic, asthma, dehydration, bleeding, poisoning, seizure, diabetic, or other"
+}`;
+
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: `Translate to English in one sentence, keep medical terms accurate. Return ONLY the translation, nothing else: "${text}"`,
-                  },
-                ],
-              },
-            ],
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json" }
           }),
         }
       );
 
       const data = await res.json();
-      const translated = data.candidates?.[0]?.content?.parts?.[0]?.text || text;
-      const trimmed = translated.trim();
-      setEnglishTranscript(trimmed);
-      applyDetection(trimmed);
-    } catch {
+
+      if (data.error) {
+        console.error("Gemini API Error:", data.error);
+        setEnglishTranscript(text);
+        setAiTriageMessage(selectedLanguage === 'hi' ? "System par abhi bohot load hai (Limit exceed). Kripya neeche apni emergency khud select karein." : "System is overloaded. Please manually select the emergency type below.");
+        applyDetection(text);
+        return;
+      }
+
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!rawText) {
+        console.error("No valid response from Gemini:", data);
+        setEnglishTranscript(text);
+        setAiTriageMessage(selectedLanguage === 'hi' ? "AI Assistant abhi jawab nahi de pa raha hai. Kripya neeche apni emergency khud select karein." : "AI Assistant is unavailable. Please manually select the emergency type below.");
+        applyDetection(text);
+        return;
+      }
+
+      try {
+        // Strip markdown if Gemini sends it by mistake
+        let cleanText = rawText;
+        if (cleanText.includes('```json')) {
+          cleanText = cleanText.split('```json')[1].split('```')[0].trim();
+        } else if (cleanText.includes('```')) {
+          cleanText = cleanText.split('```')[1].split('```')[0].trim();
+        }
+
+        const json = JSON.parse(cleanText);
+        setEnglishTranscript(json.english_translation || text);
+        setAiTriageMessage(json.ai_message || null);
+
+        if (json.emergency_category) {
+          const isMain = EMERGENCY_TYPES.some(t => t.id === json.emergency_category && t.id !== 'other');
+          const isOther = OTHER_EMERGENCIES.some(t => t.id === json.emergency_category);
+
+          if (isMain) {
+            setDetectedType(json.emergency_category);
+            setSelectedType(json.emergency_category);
+            setSelectedOther(null);
+          } else if (isOther) {
+            setDetectedType('other');
+            setSelectedType('other');
+            setSelectedOther(json.emergency_category);
+          } else {
+            applyDetection(json.english_translation || text);
+          }
+          setTimeout(() => {
+            gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 300);
+        } else {
+          applyDetection(json.english_translation || text);
+        }
+      } catch (e) {
+        console.error("Failed to parse Gemini JSON:", e, rawText);
+        setEnglishTranscript(text);
+        setAiTriageMessage(selectedLanguage === 'hi' ? "Server par abhi traffic zyada hai (API limit). Kripya neeche apni emergency khud select karein." : "System is experiencing heavy traffic. Please manually select the emergency type below.");
+        applyDetection(text);
+      }
+    } catch (e) {
+      console.error("Fetch error:", e);
       setEnglishTranscript(text);
+      setAiTriageMessage(selectedLanguage === 'hi' ? "Network ya API error ki wajah se main samajh nahi paya. Kripya neeche apni emergency khud select karein." : "Could not connect to AI Assistant. Please manually select the emergency type below.");
       applyDetection(text);
     } finally {
       setTranslating(false);
     }
-  }, [applyDetection, setEnglishTranscript]);
+  }, [applyDetection, selectedLanguage, setEnglishTranscript]);
 
   const processTranscript = useCallback((text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-
-    if (selectedLanguage === 'hi') {
-      translateToEnglish(trimmed);
-    } else {
-      setEnglishTranscript(trimmed);
-      applyDetection(trimmed);
-    }
-  }, [applyDetection, selectedLanguage, setEnglishTranscript, translateToEnglish]);
+    processWithGemini(trimmed);
+  }, [processWithGemini]);
 
   const startListening = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -306,6 +365,7 @@ export default function VoiceInputScreen() {
   function handleReset() {
     setVoiceTranscript('');
     setEnglishTranscript('');
+    setAiTriageMessage(null);
     setSelectedType(null);
     setSelectedOther(null);
     setDetectedType(null);
@@ -383,11 +443,10 @@ export default function VoiceInputScreen() {
                         handleReset();
                       }
                     }}
-                    className={`rounded-full px-5 py-2 text-sm font-black transition-all ${
-                      selectedLanguage === language.id
+                    className={`rounded-full px-5 py-2 text-sm font-black transition-all ${selectedLanguage === language.id
                         ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
                         : 'text-slate-500 hover:text-slate-800'
-                    }`}
+                      }`}
                   >
                     {language.label}
                   </button>
@@ -418,11 +477,10 @@ export default function VoiceInputScreen() {
                       }
                     }}
                     disabled={translating}
-                    className={`relative z-10 flex h-24 w-24 cursor-pointer items-center justify-center rounded-full border-2 transition-all sm:h-28 sm:w-28 ${
-                      listening
+                    className={`relative z-10 flex h-24 w-24 cursor-pointer items-center justify-center rounded-full border-2 transition-all sm:h-28 sm:w-28 ${listening
                         ? 'animate-mic-pulse border-red-300 bg-red-600 text-white shadow-2xl shadow-red-600/25'
                         : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 active:scale-95'
-                    } ${translating ? 'cursor-not-allowed opacity-50' : ''}`}
+                      } ${translating ? 'cursor-not-allowed opacity-50' : ''}`}
                     aria-label={listening ? 'Stop listening' : 'Start listening'}
                   >
                     <Mic className="h-10 w-10" />
@@ -470,38 +528,54 @@ export default function VoiceInputScreen() {
             </div>
 
             {(voiceTranscript || englishTranscript || translating) && (
-              <div className="animate-fade-up mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.15em] text-slate-400">
-                    Emergency Details
-                  </p>
-                  <button
-                    onClick={handleReset}
-                    className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-100"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Record again
-                  </button>
+              <div className="animate-fade-up mt-5 flex flex-col gap-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.15em] text-slate-400">
+                      Emergency Details
+                    </p>
+                    <button
+                      onClick={handleReset}
+                      className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-100"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Record again
+                    </button>
+                  </div>
+
+                  {voiceTranscript && (
+                    <div className="mb-3">
+                      <div className="text-[11px] font-bold text-slate-400">You said</div>
+                      <div className="mt-1 text-base font-bold text-slate-800">"{voiceTranscript}"</div>
+                    </div>
+                  )}
+
+                  {translating ? (
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-red-600" />
+                      <p className="m-0 text-sm font-bold text-slate-500">Understanding emergency...</p>
+                    </div>
+                  ) : englishTranscript && englishTranscript !== voiceTranscript ? (
+                    <div>
+                      <div className="text-[11px] font-bold text-slate-400">Meaning</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-600">"{englishTranscript}"</div>
+                    </div>
+                  ) : null}
                 </div>
 
-                {voiceTranscript && (
-                  <div className="mb-3">
-                    <div className="text-[11px] font-bold text-slate-400">You said</div>
-                    <div className="mt-1 text-base font-bold text-slate-800">"{voiceTranscript}"</div>
+                {aiTriageMessage && !translating && (
+                  <div className="animate-fade-up rounded-2xl border border-indigo-100 bg-indigo-50 p-4 shadow-sm">
+                    <div className="mb-2 flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 text-indigo-500" />
+                      <span className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-500">
+                        AI Triage Assistant
+                      </span>
+                    </div>
+                    <div className="text-sm font-bold leading-relaxed text-indigo-900">
+                      {aiTriageMessage}
+                    </div>
                   </div>
                 )}
-
-                {translating ? (
-                  <div className="flex items-center gap-2">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-red-600" />
-                    <p className="m-0 text-sm font-bold text-slate-500">Understanding emergency...</p>
-                  </div>
-                ) : englishTranscript && englishTranscript !== voiceTranscript ? (
-                  <div>
-                    <div className="text-[11px] font-bold text-slate-400">Meaning</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-600">"{englishTranscript}"</div>
-                  </div>
-                ) : null}
               </div>
             )}
           </div>
@@ -531,15 +605,13 @@ export default function VoiceInputScreen() {
                       setSelectedType(type.id);
                       if (type.id !== 'other') setSelectedOther(null);
                     }}
-                    className={`group flex min-h-28 items-start gap-4 rounded-2xl border p-4 text-left transition-all active:scale-[0.98] ${
-                      selected
+                    className={`group flex min-h-28 items-start gap-4 rounded-2xl border p-4 text-left transition-all active:scale-[0.98] ${selected
                         ? 'border-red-300 bg-red-50 shadow-lg shadow-red-600/10'
                         : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md'
-                    }`}
+                      }`}
                   >
-                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
-                      selected ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 group-hover:text-red-600'
-                    }`}>
+                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${selected ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 group-hover:text-red-600'
+                      }`}>
                       <Icon className="h-6 w-6" />
                     </span>
 
@@ -573,11 +645,10 @@ export default function VoiceInputScreen() {
                   <button
                     key={other.id}
                     onClick={() => setSelectedOther(other.id)}
-                    className={`rounded-xl border p-3 text-left text-xs font-bold transition-all active:scale-95 ${
-                      selectedOther === other.id
+                    className={`rounded-xl border p-3 text-left text-xs font-bold transition-all active:scale-95 ${selectedOther === other.id
                         ? 'border-red-300 bg-red-50 text-red-600 shadow-sm'
                         : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     {other.label}
                   </button>
@@ -587,11 +658,10 @@ export default function VoiceInputScreen() {
           )}
 
           <div className="mt-6">
-            <div className={`mb-3 flex items-center gap-2 rounded-2xl border px-4 py-3 text-xs font-bold ${
-              locationReady
+            <div className={`mb-3 flex items-center gap-2 rounded-2xl border px-4 py-3 text-xs font-bold ${locationReady
                 ? 'border-green-100 bg-green-50 text-green-700'
                 : 'border-amber-100 bg-amber-50 text-amber-700'
-            }`}>
+              }`}>
               <MapPin className="h-4 w-4 shrink-0" />
               <span>{locationText}</span>
             </div>

@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAppContext } from '../context/AppContext';
+import { useGeolocation } from '../hooks/useGeolocation';
 
 /* ── Haversine distance (km) ── */
 function haversineDistance(lat1, lng1, lat2, lng2) {
@@ -60,7 +61,7 @@ const SCHEME_BADGES = {
 export default function NearbyHospitalsScreen() {
   const navigate = useNavigate();
   const routeLocation = useLocation();
-  const { location: contextLocation, activeScheme } = useAppContext();
+  const { location: contextLocation, setLocation, activeScheme } = useAppContext();
 
   const {
     emergencyType = 'other',
@@ -72,15 +73,39 @@ export default function NearbyHospitalsScreen() {
 
   const userLocation = routeUserLocation || contextLocation;
   const scheme = routeScheme || activeScheme || 'mj';
+  const {
+    coords: detectedCoords,
+    loading: locationLoading,
+    error: locationError,
+    isApproximate,
+  } = useGeolocation({ autoFetch: !userLocation?.lat || !userLocation?.lng });
 
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const resolvedLocation = userLocation?.lat && userLocation?.lng
+    ? userLocation
+    : detectedCoords?.lat && detectedCoords?.lng
+      ? { ...detectedCoords, isApproximate }
+      : null;
+
+  useEffect(() => {
+    if (!(contextLocation?.lat && contextLocation?.lng) && resolvedLocation?.lat && resolvedLocation?.lng) {
+      setLocation(resolvedLocation);
+    }
+  }, [contextLocation?.lat, contextLocation?.lng, resolvedLocation, setLocation]);
+
   // ── Fetch + filter + sort hospitals ──
   useEffect(() => {
-    if (!userLocation?.lat || !userLocation?.lng) {
-      setError('Location not available. Please go back and try again.');
+    if (!resolvedLocation?.lat || !resolvedLocation?.lng) {
+      if (locationLoading) {
+        setLoading(true);
+        setError('');
+        return;
+      }
+
+      setError(locationError || 'Location not available. Please go back and try again.');
       setLoading(false);
       return;
     }
@@ -94,13 +119,13 @@ export default function NearbyHospitalsScreen() {
         const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
         // Filter: has location + phone + is active
-        const valid = all.filter((h) => h.lat && h.lng && h.phone && h.isActive !== false);
+        const valid = all.filter((h) => h.lat && h.lng && (h.phone || h.exotelNumber) && h.isActive !== false);
 
         // Calculate distance
         const withDist = valid.map((h) => ({
           ...h,
           distanceKm: Math.round(
-            haversineDistance(userLocation.lat, userLocation.lng, h.lat, h.lng) * 10
+            haversineDistance(resolvedLocation.lat, resolvedLocation.lng, h.lat, h.lng) * 10
           ) / 10,
         }));
 
@@ -134,7 +159,7 @@ export default function NearbyHospitalsScreen() {
     }
 
     fetchHospitals();
-  }, [userLocation, emergencyType]);
+  }, [resolvedLocation, emergencyType, locationLoading, locationError]);
 
   // ── Navigate to calling screen ──
   function handleStartCalling() {
@@ -142,7 +167,7 @@ export default function NearbyHospitalsScreen() {
       state: {
         hospitals,
         emergencyType,
-        userLocation,
+        userLocation: resolvedLocation,
         transcript,
         language,
         scheme,

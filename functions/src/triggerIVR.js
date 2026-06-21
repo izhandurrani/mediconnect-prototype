@@ -10,6 +10,38 @@ const MAX_HOSPITALS = 10;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+function isCallableHospital(data) {
+  return !!(data && data.lat && data.lng && (data.phone || data.exotelNumber));
+}
+
+/**
+ * Resolve a specific ordered list of hospitals by Firestore document IDs.
+ * Preserves the input order and skips docs that are missing or not callable.
+ */
+async function getHospitalsByIds(db, hospitalIds) {
+  if (!Array.isArray(hospitalIds) || hospitalIds.length === 0) {
+    return [];
+  }
+
+  const docPromises = hospitalIds.map((hospitalId) =>
+    db.collection("hospitals").doc(hospitalId).get()
+  );
+  const snapshots = await Promise.all(docPromises);
+
+  return snapshots
+    .map((snap, index) => {
+      if (!snap.exists) return null;
+      const data = snap.data();
+      if (!isCallableHospital(data) || data.isActive === false) return null;
+      return {
+        id: snap.id,
+        ...data,
+        orderIndex: index,
+      };
+    })
+    .filter(Boolean);
+}
+
 /**
  * Query /hospitals within RADIUS_KM of the emergency location using geohash
  * bounds, then filter by real distance.
@@ -48,7 +80,7 @@ async function queryNearbyHospitals(db, lat, lng) {
       if (distKm > RADIUS_KM) continue;
 
       // Must have a phone number to call
-      if (!data.phone && !data.exotelNumber) continue;
+      if (!isCallableHospital(data) || data.isActive === false) continue;
 
       hospitals.push({
         id: doc.id,
@@ -237,7 +269,15 @@ exports.triggerIVR = onDocumentCreated("emergencies/{emergencyId}", async (event
 
   let hospitals;
   try {
-    hospitals = await queryNearbyHospitals(db, lat, lng);
+    const requestedHospitalIds = Array.isArray(data.hospitalsContacted)
+      ? data.hospitalsContacted.filter(Boolean)
+      : [];
+
+    if (requestedHospitalIds.length > 0) {
+      hospitals = await getHospitalsByIds(db, requestedHospitalIds);
+    } else {
+      hospitals = await queryNearbyHospitals(db, lat, lng);
+    }
   } catch (err) {
     await docRef.update({
       ivrStatus: "error",
@@ -324,4 +364,4 @@ exports.triggerIVR = onDocumentCreated("emergencies/{emergencyId}", async (event
   return null;
 });
 
-module.exports = { triggerIVR: exports.triggerIVR, queryNearbyHospitals };
+module.exports = { triggerIVR: exports.triggerIVR, queryNearbyHospitals, getHospitalsByIds };
