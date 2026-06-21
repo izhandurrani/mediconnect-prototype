@@ -207,14 +207,14 @@ export default function VoiceInputScreen() {
         return;
       }
 
+      const responseLang = selectedLanguage === 'hi' ? 'Hindi' : 'English';
       const prompt = `You are an AI Emergency Triage Assistant. A user is reporting a medical emergency. 
 Input: "${text}"
-Selected Language: ${selectedLanguage === 'hi' ? 'Hindi' : 'English'}
 
 Return a JSON object exactly like this:
 {
-  "english_translation": "Translate the input to English accurately if not already in English",
-  "ai_message": "Provide a short, empathetic 1-2 sentence reassurance in the Selected Language telling the user you understand the emergency and are finding the right help.",
+  "english_translation": "Translate the input to English accurately. If already in English, return as-is.",
+  "ai_message": "Write a short empathetic 1-2 sentence reassurance STRICTLY in ${responseLang} only. Do NOT use any other language. Tell the user you understand the emergency and are finding the right help.",
   "emergency_category": "Identify the best category from: cardiac, accident, newborn, stroke, allergic, asthma, dehydration, bleeding, poisoning, seizure, diabetic, or other"
 }`;
 
