@@ -2,7 +2,7 @@
 
 Voice-first emergency medical response system — connects patients to the nearest available hospital bed in under 60 seconds through automated IVR calls.
 
-<!-- [🔗 Live Demo](https://your-deployed-url.web.app) · [▶️ Demo Video](https://youtube.com/your-demo) -->
+[🔗 Live Demo]- https://medi-connect-6c1b2.web.app
 
 ---
 
