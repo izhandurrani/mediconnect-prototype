@@ -40,6 +40,8 @@ We use Gemini for triage classification rather than rule-based keyword matching 
 
 We picked Gemini 2.5 Flash specifically because latency matters in emergencies (Flash responds in ~800ms), and its Hindi/Marathi comprehension is solid enough for real-world rural dialects we tested with.
 
+The system primarily uses Gemini 2.5 Flash for patient-facing triage workflows due to its low latency and multilingual capabilities. Some supporting and backend workflows currently use separate Gemini integrations.
+
 ---
 
 ## Tech Stack
